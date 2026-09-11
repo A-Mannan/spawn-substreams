@@ -495,3 +495,93 @@ SELECT
     graduations
 FROM protocol_day_stats
 ORDER BY day;
+
+-- Candle roll-ups: OHLC algebra composes from the base granularity.
+--   open  = first(open)  by time ASC
+--   close = last(close)  by time DESC
+--   high  = max(high), low = min(low), volumes/counts = sum()
+CREATE OR REPLACE VIEW candles_5m AS
+WITH b AS (
+    SELECT pool_id,
+           minute - (minute % 5) AS bucket,
+           minute,
+           open_sqrt_x96, close_sqrt_x96, high_sqrt_x96, low_sqrt_x96,
+           buy_volume_eth, sell_volume_eth, buy_volume_tokens, sell_volume_tokens,
+           swap_count
+    FROM pool_minute_stats)
+SELECT pool_id, bucket,
+       (array_agg(open_sqrt_x96  ORDER BY minute))[1]      AS open_sqrt_x96,
+       (array_agg(close_sqrt_x96 ORDER BY minute DESC))[1] AS close_sqrt_x96,
+       max(high_sqrt_x96)                                  AS high_sqrt_x96,
+       min(low_sqrt_x96)                                   AS low_sqrt_x96,
+       sum(buy_volume_eth)                                 AS buy_volume_eth,
+       sum(sell_volume_eth)                                AS sell_volume_eth,
+       sum(buy_volume_tokens)                              AS buy_volume_tokens,
+       sum(sell_volume_tokens)                             AS sell_volume_tokens,
+       sum(swap_count)                                     AS swap_count
+FROM b GROUP BY pool_id, bucket;
+
+CREATE OR REPLACE VIEW candles_15m AS
+WITH b AS (
+    SELECT pool_id,
+           minute - (minute % 15) AS bucket,
+           minute,
+           open_sqrt_x96, close_sqrt_x96, high_sqrt_x96, low_sqrt_x96,
+           buy_volume_eth, sell_volume_eth, buy_volume_tokens, sell_volume_tokens,
+           swap_count
+    FROM pool_minute_stats)
+SELECT pool_id, bucket,
+       (array_agg(open_sqrt_x96  ORDER BY minute))[1]      AS open_sqrt_x96,
+       (array_agg(close_sqrt_x96 ORDER BY minute DESC))[1] AS close_sqrt_x96,
+       max(high_sqrt_x96)                                  AS high_sqrt_x96,
+       min(low_sqrt_x96)                                   AS low_sqrt_x96,
+       sum(buy_volume_eth)                                 AS buy_volume_eth,
+       sum(sell_volume_eth)                                AS sell_volume_eth,
+       sum(buy_volume_tokens)                              AS buy_volume_tokens,
+       sum(sell_volume_tokens)                             AS sell_volume_tokens,
+       sum(swap_count)                                     AS swap_count
+FROM b GROUP BY pool_id, bucket;
+
+CREATE OR REPLACE VIEW candles_4h AS
+WITH b AS (
+    SELECT pool_id,
+           hour - (hour % 4) AS bucket,
+           hour,
+           open_sqrt_x96, close_sqrt_x96, high_sqrt_x96, low_sqrt_x96,
+           buy_volume_eth, sell_volume_eth, buy_volume_tokens, sell_volume_tokens,
+           swap_count
+    FROM pool_hour_stats)
+SELECT pool_id, bucket,
+       (array_agg(open_sqrt_x96  ORDER BY hour))[1]      AS open_sqrt_x96,
+       (array_agg(close_sqrt_x96 ORDER BY hour DESC))[1] AS close_sqrt_x96,
+       max(high_sqrt_x96)                                AS high_sqrt_x96,
+       min(low_sqrt_x96)                                 AS low_sqrt_x96,
+       sum(buy_volume_eth)                               AS buy_volume_eth,
+       sum(sell_volume_eth)                              AS sell_volume_eth,
+       sum(buy_volume_tokens)                            AS buy_volume_tokens,
+       sum(sell_volume_tokens)                           AS sell_volume_tokens,
+       sum(swap_count)                                   AS swap_count
+FROM b GROUP BY pool_id, bucket;
+
+-- Leaderboard snapshot: pools ranked by lifetime volume (refreshed periodically;
+-- dev: leaderboard-refresher sidecar every 30s; prod: pg_cron every 1-5 min with
+-- REFRESH MATERIALIZED VIEW CONCURRENTLY — requires the unique index below).
+CREATE MATERIALIZED VIEW IF NOT EXISTS leaderboard_daily AS
+SELECT
+    p.pool_id,
+    p.token,
+    t.symbol,
+    p.status,
+    ps.buy_volume_eth,
+    ps.sell_volume_eth,
+    ps.swap_count,
+    ps.creator_revenue_total,
+    ps.protocol_revenue_total,
+    ps.ath_sqrt_x96,
+    ps.last_price_sqrt_x96
+FROM pools p
+JOIN pool_stats ps ON ps.pool_id = p.pool_id
+LEFT JOIN tokens t ON t.token = p.token
+ORDER BY (ps.buy_volume_eth + ps.sell_volume_eth) DESC;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_daily_pool ON leaderboard_daily(pool_id);
