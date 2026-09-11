@@ -1,0 +1,86 @@
+services:
+  ethereum-node:
+    image: ghcr.io/streamingfast/go-ethereum:geth-v1.16.7-fh3.0
+    container_name: spawn-dev-node
+    entrypoint: ["/app/fireeth"]
+    command:
+      - start
+      - reader-node,relayer,merger,firehose,substreams-tier1,substreams-tier2
+      - --config-file=
+      - --log-format=text
+      - --log-to-file=false
+      - --data-dir=/data
+      - --advertise-block-id-encoding=hex
+      - --advertise-chain-name=local-ethereum
+      - --common-first-streamable-block=0
+      - --reader-node-path=geth
+      - --reader-node-arguments=--dev --dev.period=1 --gcmode=archive --vmtrace=firehose --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3,debug,txpool --datadir=/data/geth
+      - --firehose-grpc-listen-addr=:8089
+      - --substreams-tier1-grpc-listen-addr=:9000
+      - --substreams-tier1-block-type=sf.ethereum.type.v2.Block
+      - --substreams-rpc-endpoints=http://localhost:8545
+    ports:
+      - "8545:8545"
+      - "8546:8546"
+      - "8089:8089"
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - ethereum_data:/data
+    networks:
+      - ethereum_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: spawn-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: spawn
+    ports:
+      - "5433:5432"   # 5432 taken by system postgres on this machine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d spawn"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ethereum_network
+
+  leaderboard-refresher:
+    image: postgres:16-alpine
+    container_name: spawn-leaderboard-refresher
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: spawn
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache postgresql16-client >/dev/null 2>&1 || apk add --no-cache postgresql-client >/dev/null 2>&1
+        while true; do
+          psql -c 'REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard_daily' >/dev/null 2>&1 || true
+          sleep 30
+        done
+    networks:
+      - ethereum_network
+
+volumes:
+  ethereum_data:
+  postgres_data:
+
+networks:
+  ethereum_network:
+    driver: bridge

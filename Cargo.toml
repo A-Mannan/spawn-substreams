@@ -1,0 +1,29 @@
+[package]
+name = "spawn_substreams"
+version = "0.1.0"
+edition = "2021"
+description = "Spawn launchpad data layer: decodes MilestoneHook + protocol contracts + Uniswap v4 PoolManager swaps into PostgreSQL via the Substreams SQL sink (Database Changes mode)."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+substreams = "0.7"
+substreams-ethereum = "0.11"
+substreams-database-change = "4"
+prost = "0.13"
+prost-types = "0.13"
+hex = "0.4"
+anyhow = "1"
+hex-literal = "0.4"
+ethabi = "17"
+
+[build-dependencies]
+substreams-ethereum = "0.11"
+prost-build = "0.13"
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = "debuginfo"

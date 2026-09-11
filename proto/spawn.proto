@@ -1,0 +1,322 @@
+syntax = "proto3";
+
+package spawn.v1;
+
+// ---------------------------------------------------------------------------
+// Spawn launchpad data layer. One protobuf message per contract event.
+// uint256/int256 wei amounts are decimal strings; addresses and hashes are
+// 0x-prefixed lowercase hex strings; PoolId is the 0x-prefixed 32-byte hex.
+// ---------------------------------------------------------------------------
+
+message SpawnEvents {
+    // MilestoneHook lifecycle
+    repeated Launch launches = 1;
+    repeated Graduation graduations = 2;
+    repeated CurveDeployment curve_deployments = 3;
+    repeated BandDeployment band_deployments = 4;
+    repeated BandSkip band_skips = 5;
+    repeated MilestoneHarvest milestone_harvests = 6;
+    DevBuy dev_buy = 7;                 // at most one per launch
+    DevBuySkip dev_buy_skip = 8;
+
+    // Payout economics
+    repeated PayoutPotFunding payout_pot_fundings = 9;
+    repeated PayoutPotRedemption payout_pot_redemptions = 10;
+    repeated PayoutTip payout_tips = 11;
+    repeated PluginPayout plugin_payouts = 12;
+    repeated CreatorAccrual creator_accruals = 13;
+    repeated CreatorClaim creator_claims = 14;
+    repeated CreatorPathAccrual creator_path_accruals = 15;
+    repeated CreatorPathClaim creator_path_claims = 16;
+    repeated CreatorPathClaimFailure creator_path_claim_failures = 17;
+    repeated ProtocolAccrual protocol_accruals = 18;
+    repeated ProtocolClaim protocol_claims = 19;
+    repeated FeeCollection fee_collections = 20;
+    repeated FeeRouting fee_routings = 21;
+
+    // Governance / registry
+    repeated EconomicConfigSet economic_configs = 22;
+    repeated ProtocolRecipientSet protocol_recipient_sets = 23;
+    repeated PluginRegistration plugin_registrations = 24;
+    repeated PluginSuspension plugin_suspensions = 25;
+    repeated MinterSet minter_sets = 26;
+
+    // Launch token (dynamic data source resolved via store_pools)
+    repeated TokenBurn token_burns = 27;
+}
+
+message TradedSwaps {
+    repeated TradedSwap swaps = 1;
+}
+
+// --- Common per-event context ---------------------------------------------
+message EventMeta {
+    uint64 block_number = 1;
+    string block_hash = 2;
+    uint64 timestamp = 3;      // block unix seconds
+    string tx_hash = 4;
+    uint32 log_index = 5;
+    string ordinal_key = 6;    // block:log_index, unique per event instance
+}
+
+// --- MilestoneHook lifecycle ----------------------------------------------
+
+message Launch {
+    EventMeta meta = 1;
+    string pool_id = 2;        // 0x + 32-byte hex
+    string creator = 3;
+    string token = 4;
+    string total_supply = 5;   // uint256 decimal string
+    int32 opening_level = 6;   // int24
+    int32 far_level = 7;
+    string config_hash = 8;    // 0x + 32-byte hex
+    string payout_plan = 9;    // LaunchConfigured bitmask, decimal string
+    string dev_buy_share_wad = 10;
+    // v4 pool key components for cross-referencing PoolManager data
+    string hook = 11;
+    string currency0 = 12;     // always ETH address (0x0)
+    string currency1 = 13;     // launch token
+    // token metadata, fetched once per token via cached RPC (store_token_meta)
+    string token_name = 14;
+    string token_symbol = 15;
+    string token_decimals = 16;
+}
+
+message Graduation {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    int32 graduation_level = 3;
+    string quote_proceeds = 4;
+    string lp_seed_quote = 5;
+    string creator_quote = 6;
+    string protocol_quote = 7;
+    string full_range_liquidity = 8; // uint128 decimal string
+}
+
+message CurveDeployment {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string minted = 3;
+    uint32 deployed = 4;       // full bitmap after mint
+    string token_settled = 5;
+}
+
+message BandDeployment {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    uint32 index = 3;
+    int32 level_lower = 4;
+    int32 level_upper = 5;
+    string liquidity = 6;      // uint128 decimal string
+    string token_inventory = 7;
+}
+
+message BandSkip {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    uint32 index = 3;
+    string carried_inventory = 4;
+}
+
+message MilestoneHarvest {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    uint32 index = 3;
+    string quote_proceeds = 4;
+    string token_residue = 5;
+    uint32 completed_milestones = 6;
+}
+
+message DevBuy {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string tokens_bought = 3;
+    string eth_spent = 4;
+}
+
+message DevBuySkip {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string relayer = 3;
+    string tokens_requested = 4;
+}
+
+// --- Payout economics ------------------------------------------------------
+
+message PayoutPotFunding {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    uint32 milestone_index = 3;
+    string gross_quote = 4;
+    string service_fee = 5;
+    string net_quote = 6;
+    uint64 economic_version = 7;
+}
+
+message PayoutPotRedemption {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string amount = 3;
+}
+
+message PayoutTip {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string flusher = 3;
+    string amount = 4;
+}
+
+message PluginPayout {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    uint32 plugin_index = 3;
+    string plugin = 4;
+    PluginOutcome outcome = 5;   // DELIVERED | CARRIED | REDIRECTED
+    string current_share = 6;
+    string previous_carry = 7;
+    string amount = 8;         // delivered / carried / redirected respectively
+}
+
+enum PluginOutcome {
+    PLUGIN_DELIVERED = 0;
+    PLUGIN_CARRIED = 1;
+    PLUGIN_REDIRECTED = 2;
+}
+
+message CreatorAccrual {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string amount = 3;
+    AccrualSource source = 4;
+    uint64 economic_version = 5;
+}
+
+message CreatorClaim {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string holder = 3;
+    string amount = 4;
+}
+
+message CreatorPathAccrual {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string amount = 3;
+}
+
+message CreatorPathClaim {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string holder = 3;
+    string amount = 4;
+}
+
+message CreatorPathClaimFailure {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string holder = 3;
+    string amount = 4;
+}
+
+message ProtocolAccrual {
+    EventMeta meta = 1;
+    string pool_id = 2;       // zero-pool-id sentinel for global accruals if any
+    string amount = 3;
+    AccrualSource source = 4;
+    uint64 economic_version = 5;
+}
+
+message ProtocolClaim {
+    EventMeta meta = 1;
+    string recipient = 2;
+    string amount = 3;
+}
+
+message FeeCollection {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string caller = 3;
+    string quote_fees = 4;
+    string token_fees = 5;
+}
+
+message FeeRouting {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string creator_quote = 3;
+    string protocol_quote = 4;
+    string diverted_to_next_band = 5;
+    string tokens_burned = 6;
+    uint64 economic_version = 7;
+}
+
+// Mirrors MilestoneBase.AccrualSource (CURVE_PROCEEDS=0, SWAP_FEES=1, MILESTONE_HARVEST=2)
+enum AccrualSource {
+    CURVE_PROCEEDS = 0;
+    SWAP_FEES = 1;
+    MILESTONE_HARVEST = 2;
+}
+
+// --- Governance / registry -------------------------------------------------
+
+message EconomicConfigSet {
+    EventMeta meta = 1;
+    uint64 version = 2;
+    string harvest_service_fee_wad = 3;
+    string quote_creator_share_wad = 4;
+    string token_milestone_fund_share_wad = 5;
+}
+
+message ProtocolRecipientSet {
+    EventMeta meta = 1;
+    string recipient = 2;
+}
+
+message PluginRegistration {
+    EventMeta meta = 1;
+    uint32 registry_index = 2;
+    string plugin = 3;
+    string take_wad = 4;
+    uint32 gas_limit = 5;
+    string code_hash = 6;
+    uint32 role = 7;           // PluginRole enum value
+}
+
+message PluginSuspension {
+    EventMeta meta = 1;
+    uint32 registry_index = 2;
+    bool suspended = 3;
+}
+
+message MinterSet {
+    EventMeta meta = 1;
+    string minter = 2;
+}
+
+// --- Launch token ----------------------------------------------------------
+
+message TokenBurn {
+    EventMeta meta = 1;
+    string token = 2;
+    string burner = 3;   // from-address of the Transfer-to-zero
+    string amount = 5;
+}
+
+// --- Uniswap v4 swaps (PoolManager singleton) -------------------------------
+
+message TradedSwap {
+    EventMeta meta = 1;
+    string pool_id = 2;
+    string token = 3;          // resolved from store_pools
+    string sender = 4;
+    bool is_buy = 5;           // amount0 < 0 (ETH in, token out)
+    string amount0_eth = 6;    // int256 |amount0| as decimal string (wei)
+    string amount1_tokens = 7; // int256 |amount1| as decimal string (wei)
+    string sqrt_price_x96 = 8; // uint160 decimal string
+    string liquidity = 9;      // uint128 decimal string
+    int32 tick = 10;
+    uint32 fee = 11;            // hundredths of a bip, e.g. 100 = 1%
+    // realized fee taken by the pool on this swap (fee/1e6 of input side)
+    string fee_eth = 12;        // wei, 0 when input was tokens
+    string fee_tokens = 13;    // wei, 0 when input was ETH
+}

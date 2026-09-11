@@ -1,0 +1,15 @@
+[
+ {
+  "type": "event",
+  "name": "MinterSet",
+  "inputs": [
+   {
+    "name": "minter",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ }
+]

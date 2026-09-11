@@ -1,0 +1,141 @@
+specVersion: v0.1.0
+package:
+  name: spawn_substreams
+  version: v0.1.0
+  url: https://github.com/spawn-launchpad/spawn-substreams
+  description: >-
+    Spawn launchpad data layer: decodes MilestoneHook (launchpad lifecycle,
+    ladder bands, milestone harvests, payout pots, creator/protocol revenue),
+    the PayoutPluginRegistry, ProtocolController, RevenueNFT, launch-token
+    transfers, and Uniswap v4 PoolManager swaps for launchpad pools, and loads
+    them into PostgreSQL via the Substreams SQL sink (Database Changes mode).
+
+network: local-ethereum   # docker-compose dev chain; override per target network
+
+protobuf:
+  files:
+    - spawn.proto
+  importPaths:
+    - ./proto
+
+binaries:
+  default:
+    type: wasm/rust-v1
+    file: ./target/wasm32-unknown-unknown/release/spawn_substreams.wasm
+
+imports:
+  database: https://github.com/streamingfast/substreams-sink-database-changes/releases/download/v4.0.0/substreams-sink-database-changes-v4.0.0.spkg
+  sql: https://github.com/streamingfast/substreams-sink-sql/releases/download/protodefs-v1.0.7/substreams-sink-sql-protodefs-v1.0.7.spkg
+
+# Addresses are params, not constants: the hook address is CREATE2-mined per
+# deployment, so every network pins its own set here (and `-p name=value`
+# overrides at run time). Zero values mean "not pinned yet".
+params:
+  map_spawn_events: "hook=0x7f245bac7d8fedb5be065878180cf94193d0bac0 registry=0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0 controller=0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9 revenue_nft=0xdc64a140aa3e981100a9beca4e685f962f0cf6c9"
+  map_v4_swaps: "pool_manager=0x5fbdb2315678afecb367f032d93f642f64180aa3"
+
+modules:
+  # ------------------------------------------------------------------ maps --
+  - name: map_spawn_events
+    kind: map
+    initialBlock: 0
+    inputs:
+      - params: string
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:spawn.v1.SpawnEvents
+    doc: |
+      Decodes every MilestoneHook, PayoutPluginRegistry, ProtocolController and
+      RevenueNFT log in the block into typed events. Params carry the four
+      singleton addresses.
+
+  - name: map_token_burns
+    kind: map
+    initialBlock: 0
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+      - store: store_pools
+        mode: get
+    output:
+      type: proto:spawn.v1.SpawnEvents
+    doc: |
+      Burn events (ERC-20 Transfer to 0x0) of launch tokens. Every burn path
+      (user burn(), fee burns, buyback plugin) lands here; only burns are
+      indexed, transfers are skipped (volume/balances come from swaps).
+
+  - name: map_v4_swaps
+    kind: map
+    initialBlock: 0
+    inputs:
+      - params: string
+      - source: sf.ethereum.type.v2.Block
+      - store: store_pools
+        mode: get
+    output:
+      type: proto:spawn.v1.TradedSwaps
+    doc: |
+      PoolManager singleton Swap events, filtered to launchpad pools via
+      store_pools (pool_id -> Launch). ETH is always currency0; negative
+      amount0 = ETH in = buy.
+
+  - name: map_token_meta
+    kind: map
+    initialBlock: 0
+    inputs:
+      - map: map_spawn_events
+      - store: store_pools
+        mode: get
+    output:
+      type: proto:spawn.v1.SpawnEvents
+    doc: |
+      One-time RPC enrichment: fetches name/symbol/decimals for each newly
+      launched token (batched per block, cached in store_pools) and emits
+      metadata-only Launch rows for db_out.
+
+  # ---------------------------------------------------------------- stores --
+  - name: store_pools
+    kind: store
+    updatePolicy: set_if_not_exists
+    valueType: proto:spawn.v1.Launch
+    inputs:
+      - map: map_spawn_events
+    doc: |
+      pool_id -> Launch and token -> Launch, written once at launch
+      (set_if_not_exists). The pivot for dynamic token data sources and v4
+      swap filtering.
+
+  # ---------------------------------------------------------------- index ---
+  - name: index_spawn_activity
+    kind: blockIndex
+    inputs:
+      - source: sf.ethereum.type.v2.Block
+    output:
+      type: proto:sf.substreams.index.v1.Keys
+    doc: |
+      Emits log_addr:<0xaddr> and topic0:<0xtopic> for every log in the block.
+      Consuming modules can attach blockFilter queries at network-pinning time.
+
+  # ----------------------------------------------------------------- sink ---
+  - name: db_out
+    kind: map
+    initialBlock: 0
+    inputs:
+      - map: map_spawn_events
+      - map: map_token_burns
+      - map: map_token_meta
+      - map: map_v4_swaps
+      - store: store_pools
+        mode: get
+      - source: sf.substreams.v1.Clock
+    output:
+      type: proto:sf.substreams.sink.database.v1.DatabaseChanges
+    doc: |
+      Emits DatabaseChanges: insert-only facts, state upserts, and delta-op
+      aggregates (add/sub/max/set_if_null) for volumes, revenue, ATH, burns.
+
+sink:
+  module: db_out
+  type: sf.substreams.sink.sql.v1.Service
+  config:
+    schema: ./schema.sql
+    engine: postgres
