@@ -69,12 +69,12 @@ the boolean.
 | Table | Grain | What it holds |
 |---|---|---|
 | `tokens` | token address | ERC-20 metadata (`name`, `symbol`, `uri`) from the `Launched` event, RPC fallback |
-| `pools` | pool_id | One row per launch: creator, token, supply, opening/far/graduation levels, payout plan, dev-buy share, `status` (`bonding` → `graduated`), launch/graduation block+time |
-| `bands` | (pool_id, band_index) | Post-graduation ladder bands: level range, liquidity, token inventory, `status` (`live`/`harvested`/`skipped`) |
+| `pools` | pool_id | One row per launch: creator, token, supply, opening/far/graduation levels, payout plan, dev-buy share, `wall_liquidity` (set at graduation), `status` (`bonding` → `graduated`), launch/graduation block+time |
+| `bands` | (pool_id, band_index) | Post-graduation ladder bands: level range, liquidity, token inventory, `status` (`live`/`completed`) |
 | `pots` | pool_id | Milestone payout pot: current `balance`, lifetime `funded_total`, `service_fee_total` |
 | `plugin_registry` | registry_index | Payout plugin registry entries (address, take-rate `take_wad`, gas limit, role, suspension) |
 | `economic_configs` | version | Economic parameter sets (harvest fee, creator/pot shares) with `effective_block` |
-| `protocol_state` | singleton | Current economic version, protocol recipient, last indexed block |
+| `protocol_state` | singleton | Current economic version, protocol recipient, trusted operator + set block, last indexed block |
 
 ### 2.2 Aggregates (sink delta-ops only)
 
@@ -104,7 +104,7 @@ the boolean.
 | `payout_pot_redemptions` | pot redeemed | amount |
 | `payout_tips` | flush tip | recipient, amount |
 | `plugin_payouts` | plugin share paid | plugin, `outcome`, current_share, previous_carry, amount |
-| `creator_accruals` / `protocol_accruals` | `CreatorAccrued`/`ProtocolAccrued` | **authoritative revenue ledger.** amount + `source` (`curve` \| `swap_fees`) + economic_version |
+| `creator_accruals` / `protocol_accruals` | `CreatorAccrued`/`ProtocolAccrued` | **authoritative revenue ledger.** amount + `source` (`curve_proceeds` \| `swap_fees` \| `milestone_harvest`) + economic_version |
 | `creator_path_accruals` | creator-path payout | amount |
 | `claims` | `Claimed` | claim_type, holder, amount |
 | `creator_path_claim_failures` | failed claim | holder, amount |
@@ -336,3 +336,25 @@ substreams sink postgres ./substreams.yaml --dsn "$DSN"         # run the sink
   aggregate tables (§1). Reindex/vacuum as usual for `swaps` growth; consider
   month-partitioning `swaps` and detaching old partitions to cold storage
   when volume warrants.
+
+### 6.1 Trusted signer for relay launches (backend MUST operate one)
+
+Relayed launches are authorized by an **off-chain trusted operator key**: the
+backend (or a service it runs) must hold a funded, HSM/Vault-backed private key
+whose address is registered on chain as the protocol's `trustedOperator`
+(rotatable only through typed governance). Creators never sign; the operator
+signs the complete EIP-712 `LaunchConfig` (`SpawnLaunchpad` domain, version
+`"1"`, hook address as verifying contract) and *any* address relays it —
+in practice this backend, which is also how the launch first appears in the
+indexer (it should relay, then wait for its own `Launched` event).
+
+- Serve the digest via `LaunchSupport.launchDigest(config, hook)` and
+  cross-check client digests against it before signing.
+- Treat the operator key as the protocol's highest-value secret after the
+  admin multisig: separate key from sink/indexer credentials, rotate through
+  `ProtocolController.ACTION_SET_TRUSTED_OPERATOR` on any suspicion of
+  compromise, and never expose a signing endpoint without per-creator
+  authorization and rate limits.
+- Setting `trustedOperator` to zero disables relayed launches entirely —
+  monitor for it (`protocol_state.trusted_operator` going empty/null);
+  direct creator launches keep working.
