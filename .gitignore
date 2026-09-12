@@ -2,3 +2,5 @@
 *.spkg
 *.log
 .DS_Store
+# Local-only integration-team docs (e.g. backend guide) — never commit
+/docs/
