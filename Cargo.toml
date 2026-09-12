@@ -18,6 +18,7 @@ hex = "0.4"
 anyhow = "1"
 hex-literal = "0.4"
 ethabi = "17"
+num-bigint = "0.4"
 
 [build-dependencies]
 substreams-ethereum = "0.11"

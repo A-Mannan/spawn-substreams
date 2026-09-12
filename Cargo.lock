@@ -977,6 +977,7 @@ dependencies = [
  "ethabi",
  "hex",
  "hex-literal 0.4.1",
+ "num-bigint",
  "prost 0.13.5",
  "prost-build 0.13.5",
  "prost-types 0.13.5",

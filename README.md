@@ -12,7 +12,7 @@ Decodes all 26 `MilestoneHook` events (launch, graduation, bonding-curve deploym
 |---|---|---|---|
 | `map_spawn_events` | map | `spawn.v1.SpawnEvents` | All protocol contract events, ABI-decoded |
 | `map_token_burns` | map | `spawn.v1.SpawnEvents` | Launch-token burn Transfers (to `0x0`) for burned supply |
-| `map_token_meta` | map | `spawn.v1.SpawnEvents` | Token name/symbol/decimals via RPC enrichment (`RpcBatch`) |
+| `map_token_meta` | map | `spawn.v1.SpawnEvents` | Token name/symbol/uri via RPC enrichment (`RpcBatch`) |
 | `map_v4_swaps` | map | `spawn.v1.TradedSwaps` | v4 PoolManager swaps for launchpad pools |
 | `store_pools` | store | `proto:spawn.v1.Launch` | `pool_id -> Launch` and `token -> Launch` pivot |
 | `index_spawn_activity` | blockIndex | `sf.substreams.index.v1.Keys` | `log_addr:`/`topic0:` keys per block |

@@ -17,10 +17,11 @@
 
 CREATE TABLE IF NOT EXISTS tokens (
     token        VARCHAR(42)  PRIMARY KEY,
-    name         VARCHAR(64)  NOT NULL DEFAULT '',
-    symbol       VARCHAR(32)  NOT NULL DEFAULT '',
-    decimals     INTEGER      NOT NULL DEFAULT 18
+    name         VARCHAR(256) NOT NULL DEFAULT '',
+    symbol       VARCHAR(64)  NOT NULL DEFAULT '',
+    uri          TEXT         NOT NULL DEFAULT ''
 );
+-- Note: decimals is fixed at 18 (plain OZ ERC20, no override) and not tracked.
 
 CREATE TABLE IF NOT EXISTS pools (
     pool_id             VARCHAR(66)  PRIMARY KEY,
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS pools (
     config_hash         VARCHAR(66)  NOT NULL DEFAULT '',
     payout_plan         NUMERIC(78,0),
     dev_buy_share_wad   NUMERIC(78,0),
+    wall_liquidity      NUMERIC(78,0) NOT NULL DEFAULT 0,
     status              VARCHAR(16)  NOT NULL DEFAULT 'bonding',
     launch_block        BIGINT,
     launch_time         BIGINT,
@@ -91,6 +93,8 @@ CREATE TABLE IF NOT EXISTS protocol_state (
     economic_version   BIGINT,
     protocol_recipient VARCHAR(42),
     recipient_set_block BIGINT,
+    trusted_operator   VARCHAR(42),
+    trusted_operator_set_block BIGINT,
     last_indexed_block BIGINT
 );
 
@@ -237,6 +241,7 @@ CREATE TABLE IF NOT EXISTS graduations (
     creator_quote        NUMERIC(78,0) NOT NULL,
     protocol_quote       NUMERIC(78,0) NOT NULL,
     full_range_liquidity NUMERIC(78,0) NOT NULL,
+    wall_liquidity       NUMERIC(78,0) NOT NULL DEFAULT 0,
     block_number         BIGINT       NOT NULL,
     timestamp            BIGINT       NOT NULL
 );
@@ -334,7 +339,7 @@ CREATE TABLE IF NOT EXISTS payout_pot_redemptions (
 CREATE TABLE IF NOT EXISTS payout_tips (
     ordinal_key VARCHAR(32)  PRIMARY KEY,
     pool_id     VARCHAR(66)  NOT NULL,
-    flusher     VARCHAR(42)  NOT NULL,
+    recipient   VARCHAR(42)  NOT NULL,
     amount      NUMERIC(78,0) NOT NULL,
     block_number BIGINT      NOT NULL
 );

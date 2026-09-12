@@ -88,9 +88,9 @@ modules:
     output:
       type: proto:spawn.v1.SpawnEvents
     doc: |
-      One-time RPC enrichment: fetches name/symbol/decimals for each newly
+      One-time RPC enrichment: fetches name/symbol/uri for each newly
       launched token (batched per block, cached in store_pools) and emits
-      metadata-only Launch rows for db_out.
+      metadata-only Launch rows for db_out. (Decimals is fixed at 18.)
 
   # ---------------------------------------------------------------- stores --
   - name: store_pools

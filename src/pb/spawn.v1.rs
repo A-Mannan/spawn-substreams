@@ -68,6 +68,11 @@ pub struct SpawnEvents {
     /// Launch token (dynamic data source resolved via store_pools)
     #[prost(message, repeated, tag="27")]
     pub token_burns: ::prost::alloc::vec::Vec<TokenBurn>,
+    /// Trusted operator governance (hook + controller each emit their own event)
+    #[prost(message, repeated, tag="28")]
+    pub trusted_operator_sets: ::prost::alloc::vec::Vec<TrustedOperatorSet>,
+    #[prost(message, repeated, tag="29")]
+    pub trusted_operator_updates: ::prost::alloc::vec::Vec<TrustedOperatorUpdated>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -134,12 +139,14 @@ pub struct Launch {
     #[prost(string, tag="13")]
     pub currency1: ::prost::alloc::string::String,
     /// token metadata, fetched once per token via cached RPC (store_token_meta)
+    /// name/symbol/uri ride the Launched event since the economics revision.
+    /// decimals is fixed at 18 (plain OZ ERC20, no override) and not tracked.
     #[prost(string, tag="14")]
     pub token_name: ::prost::alloc::string::String,
     #[prost(string, tag="15")]
     pub token_symbol: ::prost::alloc::string::String,
-    #[prost(string, tag="16")]
-    pub token_decimals: ::prost::alloc::string::String,
+    #[prost(string, tag="17")]
+    pub token_uri: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -161,6 +168,9 @@ pub struct Graduation {
     /// uint128 decimal string
     #[prost(string, tag="8")]
     pub full_range_liquidity: ::prost::alloc::string::String,
+    /// uint128 decimal string (token-only wall above full-range)
+    #[prost(string, tag="9")]
+    pub wall_liquidity: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -285,8 +295,9 @@ pub struct PayoutTip {
     pub meta: ::core::option::Option<EventMeta>,
     #[prost(string, tag="2")]
     pub pool_id: ::prost::alloc::string::String,
+    /// flush tip recipient (contract renamed flusher -> recipient with flushTo)
     #[prost(string, tag="3")]
-    pub flusher: ::prost::alloc::string::String,
+    pub recipient: ::prost::alloc::string::String,
     #[prost(string, tag="4")]
     pub amount: ::prost::alloc::string::String,
 }
@@ -489,6 +500,24 @@ pub struct MinterSet {
     pub meta: ::core::option::Option<EventMeta>,
     #[prost(string, tag="2")]
     pub minter: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TrustedOperatorSet {
+    #[prost(message, optional, tag="1")]
+    pub meta: ::core::option::Option<EventMeta>,
+    #[prost(string, tag="2")]
+    pub operator: ::prost::alloc::string::String,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TrustedOperatorUpdated {
+    #[prost(message, optional, tag="1")]
+    pub meta: ::core::option::Option<EventMeta>,
+    #[prost(string, tag="2")]
+    pub previous_operator: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub operator: ::prost::alloc::string::String,
 }
 // --- Launch token ----------------------------------------------------------
 

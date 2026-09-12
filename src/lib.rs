@@ -149,9 +149,11 @@ fn decode_hook_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEvents) 
             hook: String::new(),
             currency0: "0x0000000000000000000000000000000000000000".to_string(),
             currency1: hex0x(&e.token),
-            token_name: String::new(),
-            token_symbol: String::new(),
-            token_decimals: String::new(),
+            // Name/symbol/uri ride the event since the economics revision —
+            // no RPC round-trip needed for them (decimals is fixed at 18).
+            token_name: e.name.clone(),
+            token_symbol: e.symbol.clone(),
+            token_uri: e.uri.clone(),
         });
     }
     if let Some(e) = events::LaunchConfigured::match_and_decode(log) {
@@ -172,7 +174,7 @@ fn decode_hook_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEvents) 
             currency1: String::new(),
             token_name: String::new(),
             token_symbol: String::new(),
-            token_decimals: String::new(),
+            token_uri: String::new(),
         });
     }
     if let Some(e) = events::Graduated::match_and_decode(log) {
@@ -185,6 +187,7 @@ fn decode_hook_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEvents) 
             creator_quote: e.creator_quote.to_string(),
             protocol_quote: e.protocol_quote.to_string(),
             full_range_liquidity: e.full_range_liquidity.to_string(),
+            wall_liquidity: e.wall_liquidity.to_string(),
         });
     }
     if let Some(e) = events::CurvePositionsDeployed::match_and_decode(log) {
@@ -263,7 +266,7 @@ fn decode_hook_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEvents) 
         out.payout_tips.push(spawn::PayoutTip {
             meta: Some(ctx.meta()),
             pool_id: hex0x(&e.pool_id),
-            flusher: hex0x(&e.flusher),
+            recipient: hex0x(&e.recipient),
             amount: e.amount.to_string(),
         });
     }
@@ -394,6 +397,12 @@ fn decode_hook_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEvents) 
             recipient: hex0x(&e.recipient),
         });
     }
+    if let Some(e) = events::TrustedOperatorSet::match_and_decode(log) {
+        out.trusted_operator_sets.push(spawn::TrustedOperatorSet {
+            meta: Some(ctx.meta()),
+            operator: hex0x(&e.operator),
+        });
+    }
 }
 
 fn decode_registry_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEvents) {
@@ -435,6 +444,13 @@ fn decode_controller_log(ctx: &MetaCtx, log: &eth::Log, out: &mut spawn::SpawnEv
         out.protocol_recipient_sets.push(spawn::ProtocolRecipientSet {
             meta: Some(ctx.meta()),
             recipient: hex0x(&e.recipient),
+        });
+    }
+    if let Some(e) = events::TrustedOperatorUpdated::match_and_decode(log) {
+        out.trusted_operator_updates.push(spawn::TrustedOperatorUpdated {
+            meta: Some(ctx.meta()),
+            previous_operator: hex0x(&e.previous_operator),
+            operator: hex0x(&e.operator),
         });
     }
 }
@@ -529,10 +545,11 @@ fn map_token_meta(
     for token in &fresh {
         let addr = parse_addr(token, "token")?;
         owned.push((token.clone(), addr));
+        // Decimals is fixed at 18 (plain OZ ERC20, no override) — not fetched.
         batch = batch
             .add(abi::milestone_token::functions::Name {}, addr.to_vec())
             .add(abi::milestone_token::functions::Symbol {}, addr.to_vec())
-            .add(abi::milestone_token::functions::Decimals {}, addr.to_vec());
+            .add(abi::milestone_token::functions::TokenUri {}, addr.to_vec());
     }
     let batch = match batch.execute() {
         Ok(b) => b,
@@ -549,11 +566,10 @@ fn map_token_meta(
             &batch.responses[i * 3 + 1],
         )
         .unwrap_or_default();
-        let decimals = substreams_ethereum::rpc::RpcBatch::decode::<_, abi::milestone_token::functions::Decimals>(
+        let token_uri = substreams_ethereum::rpc::RpcBatch::decode::<_, abi::milestone_token::functions::TokenUri>(
             &batch.responses[i * 3 + 2],
         )
-        .map(|d| d.to_string())
-        .unwrap_or_else(|| "18".to_string());
+        .unwrap_or_default();
         let launch_block = events
             .launches
             .iter()
@@ -561,6 +577,15 @@ fn map_token_meta(
             .and_then(|l| l.meta.as_ref())
             .map(|m| m.block_number)
             .unwrap_or(0);
+        // Prefer the Launched event's own name/symbol/uri (authoritative since
+        // the economics revision); RPC values are the fallback for pre-revision
+        // pools and for the uri when the event predates it.
+        let (event_name, event_symbol, event_uri) = events
+            .launches
+            .iter()
+            .find(|l| l.token == *token && (!l.token_name.is_empty() || !l.token_uri.is_empty()))
+            .map(|l| (l.token_name.clone(), l.token_symbol.clone(), l.token_uri.clone()))
+            .unwrap_or_default();
         out.launches.push(spawn::Launch {
             meta: Some(spawn::EventMeta {
                 block_number: launch_block,
@@ -582,9 +607,9 @@ fn map_token_meta(
             hook: String::new(),
             currency0: String::new(),
             currency1: String::new(),
-            token_name: name,
-            token_symbol: symbol,
-            token_decimals: decimals,
+            token_name: if event_name.is_empty() { name } else { event_name },
+            token_symbol: if event_symbol.is_empty() { symbol } else { event_symbol },
+            token_uri: if event_uri.is_empty() { token_uri } else { event_uri },
         });
         i += 1;
     }
@@ -765,15 +790,31 @@ fn db_out(
         }
     }
 
-    // token metadata rows (from map_token_meta): one tokens row per token
+    // token metadata rows (from map_token_meta): one tokens row per token.
+    // Name/symbol/uri prefer the Launched event (merged in map_token_meta).
+    // Decimals is fixed at 18 and not tracked.
     for l in &meta_rows {
-        if l.pool_id.is_empty() && !l.token_name.is_empty() {
+        if l.pool_id.is_empty() && (!l.token_name.is_empty() || !l.token_uri.is_empty()) {
             tables
                 .upsert_row("tokens", l.token.as_str())
                 .set("token", l.token.clone())
                 .set("name", l.token_name.clone())
                 .set("symbol", l.token_symbol.clone())
-                .set("decimals", l.token_decimals.parse::<i64>().unwrap_or(18));
+                .set("uri", l.token_uri.clone());
+        }
+    }
+
+    // Fast path: Launched already carries name/symbol/uri, so seed the tokens
+    // row even when the meta RPC for this block was skipped or failed. All
+    // set_if_null so the authoritative meta upsert above always wins.
+    for l in &events.launches {
+        if !l.pool_id.is_empty() && !l.token.is_empty() && (!l.token_name.is_empty() || !l.token_uri.is_empty()) {
+            tables
+                .upsert_row("tokens", l.token.as_str())
+                .set_if_null("token", l.token.clone())
+                .set_if_null("name", l.token_name.clone())
+                .set_if_null("symbol", l.token_symbol.clone())
+                .set_if_null("uri", l.token_uri.clone());
         }
     }
 
@@ -789,12 +830,14 @@ fn db_out(
             .set("creator_quote", g.creator_quote.clone())
             .set("protocol_quote", g.protocol_quote.clone())
             .set("full_range_liquidity", g.full_range_liquidity.clone())
+            .set("wall_liquidity", g.wall_liquidity.clone())
             .set("block_number", m.block_number as i64)
             .set("timestamp", m.timestamp as i64);
         tables
             .upsert_row("pools", g.pool_id.as_str())
             .set("status", "graduated".to_string())
             .set("graduation_level", g.graduation_level)
+            .set("wall_liquidity", g.wall_liquidity.clone())
             .set("graduation_block", m.block_number as i64)
             .set("graduation_time", m.timestamp as i64);
         // Revenue accounting comes solely from CreatorAccrued/ProtocolAccrued
@@ -890,7 +933,7 @@ fn db_out(
 
     // --- milestone harvest breakdown ----------------------------------------
     // One row per (pool, milestone index): service fee to protocol, pot net,
-    // tip to flusher, plugin shares, creator-path remainder, and the buyback
+    // tip to recipient, plugin shares, creator-path remainder, and the buyback
     // burn (token Transfer to zero inside the plugin's delivery).
     // Fundings tell us gross/service/net; the flush events in the same or a
     // later block tell us the recipients. We record what is observable per
@@ -990,7 +1033,7 @@ fn db_out(
         tables
             .create_row("payout_tips", [("ordinal_key", m.ordinal_key.as_str())])
             .set("pool_id", t.pool_id.clone())
-            .set("flusher", t.flusher.clone())
+            .set("recipient", t.recipient.clone())
             .set("amount", t.amount.clone())
             .set("block_number", m.block_number as i64);
     }
@@ -1176,6 +1219,20 @@ fn db_out(
             .upsert_row("protocol_state", global_key)
             .set("protocol_recipient", r.recipient.clone())
             .set("recipient_set_block", m.block_number as i64);
+    }
+    for o in &events.trusted_operator_sets {
+        let m = o.meta.clone().unwrap_or_default();
+        tables
+            .upsert_row("protocol_state", global_key)
+            .set("trusted_operator", o.operator.clone())
+            .set("trusted_operator_set_block", m.block_number as i64);
+    }
+    for o in &events.trusted_operator_updates {
+        let m = o.meta.clone().unwrap_or_default();
+        tables
+            .upsert_row("protocol_state", global_key)
+            .set("trusted_operator", o.operator.clone())
+            .set("trusted_operator_set_block", m.block_number as i64);
     }
     for p in &events.plugin_registrations {
         let m = p.meta.clone().unwrap_or_default();

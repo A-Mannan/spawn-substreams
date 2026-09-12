@@ -43,6 +43,10 @@ message SpawnEvents {
 
     // Launch token (dynamic data source resolved via store_pools)
     repeated TokenBurn token_burns = 27;
+
+    // Trusted operator governance (hook + controller each emit their own event)
+    repeated TrustedOperatorSet trusted_operator_sets = 28;
+    repeated TrustedOperatorUpdated trusted_operator_updates = 29;
 }
 
 message TradedSwaps {
@@ -77,9 +81,12 @@ message Launch {
     string currency0 = 12;     // always ETH address (0x0)
     string currency1 = 13;     // launch token
     // token metadata, fetched once per token via cached RPC (store_token_meta)
+    // name/symbol/uri ride the Launched event since the economics revision.
+    // decimals is fixed at 18 (plain OZ ERC20, no override) and not tracked.
     string token_name = 14;
     string token_symbol = 15;
-    string token_decimals = 16;
+    reserved 16;
+    string token_uri = 17;
 }
 
 message Graduation {
@@ -91,6 +98,7 @@ message Graduation {
     string creator_quote = 6;
     string protocol_quote = 7;
     string full_range_liquidity = 8; // uint128 decimal string
+    string wall_liquidity = 9;       // uint128 decimal string (token-only wall above full-range)
 }
 
 message CurveDeployment {
@@ -162,7 +170,7 @@ message PayoutPotRedemption {
 message PayoutTip {
     EventMeta meta = 1;
     string pool_id = 2;
-    string flusher = 3;
+    string recipient = 3;   // flush tip recipient (contract renamed flusher -> recipient with flushTo)
     string amount = 4;
 }
 
@@ -291,6 +299,17 @@ message PluginSuspension {
 message MinterSet {
     EventMeta meta = 1;
     string minter = 2;
+}
+
+message TrustedOperatorSet {
+    EventMeta meta = 1;
+    string operator = 2;
+}
+
+message TrustedOperatorUpdated {
+    EventMeta meta = 1;
+    string previous_operator = 2;
+    string operator = 3;
 }
 
 // --- Launch token ----------------------------------------------------------
